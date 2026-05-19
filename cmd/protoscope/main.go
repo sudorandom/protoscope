@@ -16,6 +16,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"errors"
 	"flag"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"unicode/utf16"
 
 	_ "embed"
 
@@ -149,7 +151,11 @@ func Main() error {
 
 	var outBytes []byte
 	if *assemble {
-		scanner := protoscope.NewScanner(string(inBytes))
+		inputText, err := decodeInput(inBytes)
+		if err != nil {
+			return err
+		}
+		scanner := protoscope.NewScanner(inputText)
 		scanner.SetFile(inPath)
 		scanner.Delimited = *delimited
 
@@ -158,6 +164,7 @@ func Main() error {
 			return fmt.Errorf("syntax error: %s", err)
 		}
 	} else {
+
 		outBytes = []byte(protoscope.Write(inBytes, protoscope.WriterOptions{
 			NoQuotedStrings:        *noQuotedStrings,
 			AllFieldsAreMessages:   *allFieldsAreMessages,
@@ -184,4 +191,36 @@ func Main() error {
 
 	_, err = outFile.Write(outBytes)
 	return err
+}
+
+// decodeInput detects and handles Byte Order Marks (BOM) for UTF-8 and UTF-16.
+// This is particularly important for Windows users, as PowerShell redirection
+// (e.g., `protoscope person.bin > person.txt`) often produces UTF-16 LE files with a BOM.
+func decodeInput(b []byte) (string, error) {
+	if len(b) >= 3 && b[0] == 0xef && b[1] == 0xbb && b[2] == 0xbf {
+		// Strip UTF-8 BOM.
+		return string(b[3:]), nil
+	}
+	if len(b) >= 2 && b[0] == 0xff && b[1] == 0xfe {
+		// Decode UTF-16 Little Endian (common in PowerShell).
+		return decodeUTF16(b[2:], binary.LittleEndian)
+	}
+	if len(b) >= 2 && b[0] == 0xfe && b[1] == 0xff {
+		// Decode UTF-16 Big Endian.
+		return decodeUTF16(b[2:], binary.BigEndian)
+	}
+	// Fallback to treating as raw UTF-8.
+	return string(b), nil
+}
+
+// decodeUTF16 converts UTF-16 bytes to a UTF-8 string using the specified byte order.
+func decodeUTF16(b []byte, order binary.ByteOrder) (string, error) {
+	if len(b)%2 != 0 {
+		return "", errors.New("invalid UTF-16: odd number of bytes")
+	}
+	u16 := make([]uint16, len(b)/2)
+	for i := range u16 {
+		u16[i] = order.Uint16(b[i*2:])
+	}
+	return string(utf16.Decode(u16)), nil
 }
