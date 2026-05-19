@@ -1,0 +1,49 @@
+# This is a GoReleaser configuration file.
+# See https://goreleaser.com for more information.
+
+version: 2
+
+project_name: protoscope
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: protoscope
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    main: ./cmd/protoscope
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    # this name template makes the archives look like:
+    # protoscope_1.0.0_linux_amd64.tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # use zip for windows archives
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'

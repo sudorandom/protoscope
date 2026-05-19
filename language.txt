@@ -213,6 +213,18 @@ inf32
 5:I64 "stuff"
 
 
+# Varint-delimited messages.
+
+# Protoscope supports representing multiple varint-delimited messages in a
+# single file. When using the -d flag, messages are separated by ---.
+# 1: 1
+# ---
+# 2: 2
+
+# This will encode as:
+# [len of first message] [first message] [len of second message] [second message]
+
+
 # Disassembler.
 
 # Although the conversion from Protoscope to a byte string is well-defined, the

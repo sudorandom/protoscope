@@ -1,4 +1,5 @@
 // Copyright 2022 Google LLC
+// Copyright 2026 Kevin McDonald
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,6 +16,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"errors"
 	"flag"
 	"fmt"
@@ -22,16 +24,16 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"unicode/utf16"
 
 	_ "embed"
 
 	descpb "google.golang.org/protobuf/types/descriptorpb"
 
+	"github.com/protocolbuffers/protoscope"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
-
-	"github.com/protocolbuffers/protoscope"
 )
 
 var (
@@ -44,6 +46,7 @@ var (
 	explicitWireTypes      = flag.Bool("explicit-wire-types", false, "include an explicit wire type for every field")
 	noGroups               = flag.Bool("no-groups", false, "do not try to disassemble groups")
 	explicitLengthPrefixes = flag.Bool("explicit-length-prefixes", false, "emit literal length prefixes instead of braces")
+	varintDelimited        = flag.Bool("varint-delimited", false, "whether to treat the input as a varint-delimited stream of messages")
 
 	descriptorSet = flag.String("descriptor-set", "", "path to a file containing an encoded FileDescriptorSet, for aiding disassembly")
 	messageType   = flag.String("message-type", "", "full name of a type in the FileDescriptorSet given by -descriptor-set;\n"+
@@ -79,7 +82,6 @@ func Main() error {
 		pager := os.Getenv("PAGER")
 		if pager == "" {
 			return fmt.Errorf("%s", protoscope.LanguageTxt)
-			return nil
 		}
 
 		cmd := exec.Command(pager)
@@ -139,7 +141,7 @@ func Main() error {
 		if err != nil {
 			return err
 		}
-		defer inFile.Close()
+		defer func() { _ = inFile.Close() }()
 	}
 
 	inBytes, err := io.ReadAll(inFile)
@@ -149,26 +151,33 @@ func Main() error {
 
 	var outBytes []byte
 	if *assemble {
-		scanner := protoscope.NewScanner(string(inBytes))
+		inputText, err := decodeInput(inBytes)
+		if err != nil {
+			return err
+		}
+		scanner := protoscope.NewScanner(inputText)
 		scanner.SetFile(inPath)
+		scanner.Delimited = *varintDelimited
 
 		outBytes, err = scanner.Exec()
 		if err != nil {
-			return fmt.Errorf("syntax error: %s\n", err)
-			os.Exit(1)
+			return fmt.Errorf("syntax error: %s", err)
 		}
 	} else {
+
 		outBytes = []byte(protoscope.Write(inBytes, protoscope.WriterOptions{
 			NoQuotedStrings:        *noQuotedStrings,
 			AllFieldsAreMessages:   *allFieldsAreMessages,
 			ExplicitWireTypes:      *explicitWireTypes,
 			NoGroups:               *noGroups,
 			ExplicitLengthPrefixes: *explicitLengthPrefixes,
+			Delimited:              *varintDelimited,
 
 			Schema:          schema,
 			PrintFieldNames: *printFieldNames,
 			PrintEnumNames:  *printEnumNames,
 		}))
+
 	}
 
 	outFile := os.Stdout
@@ -178,9 +187,41 @@ func Main() error {
 		if err != nil {
 			return err
 		}
-		defer outFile.Close()
+		defer func() { _ = outFile.Close() }()
 	}
 
 	_, err = outFile.Write(outBytes)
 	return err
+}
+
+// decodeInput detects and handles Byte Order Marks (BOM) for UTF-8 and UTF-16.
+// This is particularly important for Windows users, as PowerShell redirection
+// (e.g., `protoscope person.bin > person.txt`) often produces UTF-16 LE files with a BOM.
+func decodeInput(b []byte) (string, error) {
+	if len(b) >= 3 && b[0] == 0xef && b[1] == 0xbb && b[2] == 0xbf {
+		// Strip UTF-8 BOM.
+		return string(b[3:]), nil
+	}
+	if len(b) >= 2 && b[0] == 0xff && b[1] == 0xfe {
+		// Decode UTF-16 Little Endian (common in PowerShell).
+		return decodeUTF16(b[2:], binary.LittleEndian)
+	}
+	if len(b) >= 2 && b[0] == 0xfe && b[1] == 0xff {
+		// Decode UTF-16 Big Endian.
+		return decodeUTF16(b[2:], binary.BigEndian)
+	}
+	// Fallback to treating as raw UTF-8.
+	return string(b), nil
+}
+
+// decodeUTF16 converts UTF-16 bytes to a UTF-8 string using the specified byte order.
+func decodeUTF16(b []byte, order binary.ByteOrder) (string, error) {
+	if len(b)%2 != 0 {
+		return "", errors.New("invalid UTF-16: odd number of bytes")
+	}
+	u16 := make([]uint16, len(b)/2)
+	for i := range u16 {
+		u16[i] = order.Uint16(b[i*2:])
+	}
+	return string(utf16.Decode(u16)), nil
 }

@@ -1,4 +1,5 @@
 // Copyright 2022 Google LLC
+// Copyright 2026 Kevin McDonald
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +13,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// package protoscope ...
 package protoscope
 
 import (
@@ -61,6 +61,7 @@ const (
 	tokenLeftCurly
 	tokenRightCurly
 	tokenGroupCurly
+	tokenSeparator
 	tokenEOF
 )
 
@@ -134,11 +135,16 @@ type Scanner struct {
 	// resume. The Offset field is used for indexing into Input; the remaining
 	// fields are used for error-reporting.
 	pos Position
+	// Delimited indicates that the input contains multiple varint-delimited
+	// messages separated by ---.
+	Delimited bool
+
+	lastToken token
 }
 
 // NewScanner creates a new scanner for parsing the given input.
 func NewScanner(input string) *Scanner {
-	return &Scanner{Input: input}
+	return &Scanner{Input: input, lastToken: token{FieldNumber: -1}}
 }
 
 // SetFile sets the file path shown in this Scanner's error reports.
@@ -149,7 +155,37 @@ func (s *Scanner) SetFile(path string) {
 // Exec consumes tokens until Input is exhausted, returning the resulting
 // encoded maybe-DER.
 func (s *Scanner) Exec() ([]byte, error) {
-	return s.exec(nil)
+	if !s.Delimited {
+		out, err := s.exec(nil)
+		if err != nil {
+			return nil, err
+		}
+		if s.lastToken.Kind == tokenSeparator {
+			return nil, &ParseError{s.lastToken.Pos, errors.New("--- separator can only be used in delimited mode (-varint-delimited)")}
+		}
+		return out, nil
+	}
+
+	var out []byte
+	first := true
+	for {
+		msg, err := s.exec(nil)
+		if err != nil {
+			return nil, err
+		}
+		if first && s.lastToken.Kind == tokenEOF && len(msg) == 0 {
+			break
+		}
+		first = false
+
+		out = encodeVarint(out, uint64(len(msg)), 0)
+		out = append(out, msg...)
+
+		if s.lastToken.Kind == tokenEOF {
+			break
+		}
+	}
+	return out, nil
 }
 
 // isEOF returns whether the cursor is at least n bytes ahead of the end of the
@@ -235,12 +271,11 @@ func (s *Scanner) parseEscapeSequence() (byte, error) {
 			return 0, &ParseError{s.pos, err}
 		}
 
-		var r byte
+		var r uint64
 		for _, b := range bytes {
-			r <<= 8
-			r |= b
+			r = (r << 8) | uint64(b)
 		}
-		return r, nil
+		return byte(r), nil
 	case '0', '1', '2', '3', '4', '5', '6', '7':
 		start := s.pos.Offset
 		for i := 0; i < 3 && !s.isEOF(0); i++ {
@@ -291,6 +326,12 @@ func (s *Scanner) parseQuotedString() (token, error) {
 
 // next lexes the next token.
 func (s *Scanner) next(lengthModifier **token) (token, error) {
+	t, err := s.nextInternal(lengthModifier)
+	s.lastToken = t
+	return t, err
+}
+
+func (s *Scanner) nextInternal(lengthModifier **token) (token, error) {
 again:
 	if s.isEOF(0) {
 		return token{Kind: tokenEOF, Pos: s.pos}, nil
@@ -312,10 +353,16 @@ again:
 			}
 		}
 		goto again
+	case '-':
+		if strings.HasPrefix(s.Input[s.pos.Offset:], "---") {
+			start := s.pos
+			s.advance(3)
+			return token{Kind: tokenSeparator, Pos: start}, nil
+		}
 	case '!':
 		s.advance(1)
 		if s.Input[s.pos.Offset] != '{' {
-			return token{}, &ParseError{s.pos, errors.New("expected { after !")}
+			return token{}, &ParseError{s.pos, errors.New("expected { after ! symbol")}
 		}
 		s.advance(1)
 		return token{Kind: tokenGroupCurly, Pos: s.pos}, nil
@@ -355,6 +402,14 @@ loop:
 	}
 
 	symbol := s.Input[start.Offset:s.pos.Offset]
+
+	// Treat boolean literals as aliases for 1 and 0 so they can reuse
+	// the varint and length-modifier logic below.
+	if symbol == "true" {
+		symbol = "1"
+	} else if symbol == "false" {
+		symbol = "0"
+	}
 
 	if match := regexpIntOrTag.FindStringSubmatch(symbol); match != nil {
 		// Go can detect the base if we set base=0, but it treats a leading 0 as
@@ -421,7 +476,7 @@ loop:
 			}
 
 			if value>>61 != 0 && value>>61 != -1 {
-				return token{}, &ParseError{start, errors.New("field number too large for three extra bits for the wire type.")}
+				return token{}, &ParseError{start, errors.New("field number too large for three extra bits for the wire type")}
 			}
 			fieldNumber = value
 
@@ -436,12 +491,12 @@ loop:
 			value = (value << 1) ^ (value >> 63)
 			fallthrough
 		case "":
-			var len int
+			var longForm int
 			if *lengthModifier != nil {
-				len = (*lengthModifier).Length
+				longForm = (*lengthModifier).Length
 				*lengthModifier = nil
 			}
-			enc = encodeVarint(nil, uint64(value), len)
+			enc = encodeVarint(nil, uint64(value), longForm)
 		case "i32":
 			wireType = 5
 			if value > math.MaxUint32 || value < math.MinInt32 {
@@ -531,20 +586,15 @@ loop:
 	}
 
 	switch symbol {
-	case "true":
-		return token{Kind: tokenBytes, Value: []byte{1}, Pos: s.pos, FieldNumber: -1}, nil
-	case "false":
-		return token{Kind: tokenBytes, Value: []byte{0}, Pos: s.pos, FieldNumber: -1}, nil
 	case "inf32":
-		return token{Kind: tokenBytes, WireType: 5, Value: []byte{0x00, 0x00, 0x80, 0x7f}, Pos: s.pos, FieldNumber: -1}, nil
+	        return token{Kind: tokenBytes, WireType: 5, Value: []byte{0x00, 0x00, 0x80, 0x7f}, Pos: s.pos, FieldNumber: -1}, nil
 	case "-inf32":
-		return token{Kind: tokenBytes, WireType: 5, Value: []byte{0x00, 0x00, 0x80, 0xff}, Pos: s.pos, FieldNumber: -1}, nil
+	        return token{Kind: tokenBytes, WireType: 5, Value: []byte{0x00, 0x00, 0x80, 0xff}, Pos: s.pos, FieldNumber: -1}, nil
 	case "inf64":
-		return token{Kind: tokenBytes, WireType: 1, Value: []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x7f}, Pos: s.pos, FieldNumber: -1}, nil
+	        return token{Kind: tokenBytes, WireType: 1, Value: []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x7f}, Pos: s.pos, FieldNumber: -1}, nil
 	case "-inf64":
-		return token{Kind: tokenBytes, WireType: 1, Value: []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0xff}, Pos: s.pos, FieldNumber: -1}, nil
+	        return token{Kind: tokenBytes, WireType: 1, Value: []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0xff}, Pos: s.pos, FieldNumber: -1}, nil
 	}
-
 	return token{}, fmt.Errorf("unrecognized symbol %q", symbol)
 }
 
@@ -565,7 +615,7 @@ func (s *Scanner) exec(leftCurly *token) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		if lengthModifier != nil && token.Kind != tokenLeftCurly && !(token.Kind == tokenRightCurly && len(groupStack) != 0) {
+		if lengthModifier != nil && token.Kind != tokenLeftCurly && (token.Kind != tokenRightCurly || len(groupStack) == 0) {
 			return nil, &ParseError{lengthModifier.Pos, errors.New("length modifier was not followed by '{', '}', or varint")}
 		}
 		prevToken := lastToken
@@ -629,11 +679,12 @@ func (s *Scanner) exec(leftCurly *token) ([]byte, error) {
 			} else {
 				return nil, &ParseError{token.Pos, errors.New("unmatched '}'")}
 			}
-		case tokenEOF:
-			if inferredTypeIndex != -1 {
-				inferredTypeIndex = -1
+		case tokenSeparator:
+			if leftCurly != nil || len(groupStack) != 0 {
+				return nil, &ParseError{token.Pos, errors.New("--- separator can only be used at the top level")}
 			}
-
+			return out, nil
+		case tokenEOF:
 			if leftCurly == nil && len(groupStack) == 0 {
 				return out, nil
 			}

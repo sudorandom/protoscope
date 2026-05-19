@@ -1,0 +1,67 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [opened, edited, synchronize]
+
+jobs:
+  conventional-pr-title:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4
+      - name: golangci-lint
+        run: golangci-lint run ./...
+
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - name: check formatting
+        run: golangci-lint fmt --diff ./...
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        go-version: ['1.24', '1.25', '1.26']
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4
+        with:
+          mise_toml: |
+            [tools]
+            go = "${{ matrix.go-version }}"
+      - name: build
+        run: go build ./...
+      - name: test
+        run: go test -v ./...
+
+  license-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4
+      - name: check licenses
+        run: go tool addlicense -check -ignore "**/*.yml" -ignore "**/*.yaml" -ignore ".goreleaser.yaml" -ignore ".mise.toml" .
+
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4
+      - name: go fuzz
+        run: go test -fuzz FuzzRoundTrip -fuzztime 30s

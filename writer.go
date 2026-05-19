@@ -1,4 +1,5 @@
 // Copyright 2022 Google LLC
+// Copyright 2026 Kevin McDonald
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -44,6 +45,9 @@ type WriterOptions struct {
 	// Never prints {}; instead, prints out an explicit length prefix (but still
 	// indents the contents of delimited things.
 	ExplicitLengthPrefixes bool
+	// Delimited indicates that the input contains multiple varint-delimited
+	// messages.
+	Delimited bool
 
 	// Schema is a Descriptor that describes the message type we're expecting to
 	// disassemble, if any.
@@ -63,32 +67,49 @@ func Write(src []byte, opts WriterOptions) string {
 		w.descs.Push(opts.Schema)
 	}
 
-	for len(src) > 0 {
-		w.NewLine()
-		rest, ok := w.decodeField(src)
-		if !ok {
-			w.DiscardLine()
-			break
+	if opts.Delimited {
+		for len(src) > 0 {
+			rest, length, _, ok := decodeVarint(src)
+			if !ok || uint64(len(rest)) < length {
+				break
+			}
+			msg := rest[:length]
+			src = rest[length:]
+
+			for len(msg) > 0 {
+				w.NewLine()
+				r, ok := w.decodeField(msg)
+				if !ok {
+					w.DiscardLine()
+					break
+				}
+				msg = r
+			}
+
+			if len(src) > 0 {
+				w.NewLine()
+				w.Write("---")
+			}
 		}
-		src = rest
+	} else {
+		for len(src) > 0 {
+			w.NewLine()
+			rest, ok := w.decodeField(src)
+			if !ok {
+				w.DiscardLine()
+				break
+			}
+			src = rest
+		}
 	}
 
 	// Order does not matter for fixing up unclosed groups
-	for _ = range w.groups {
+	for range w.groups {
 		w.resetGroup()
 	}
 
 	w.dumpHexString(src)
 	return string(w.Finish())
-}
-
-type line struct {
-	text     *strings.Builder
-	comments []string
-
-	// indent is how much the *next* line should be indented compared to this
-	// one.
-	indent int
 }
 
 type group struct {
@@ -504,9 +525,8 @@ func (w *writer) decodeField(src []byte) ([]byte, bool) {
 			if len(src2) == 0 || (w.AllFieldsAreMessages && len(src2) < len(delimited)) {
 				delimited = src2
 				return decodeBytes()
-			} else {
-				w.Reset(startLine)
 			}
+			w.Reset(startLine)
 		}
 
 		// Otherwise, maybe it's a UTF-8 string.
@@ -580,9 +600,10 @@ func ftoa[I uint32 | uint64](bits I, floatForSure bool) string {
 	}
 	mantLen = bitLen - expLen - 1
 
-	if bits == 0 {
+	switch bits {
+	case 0:
 		return "0.0"
-	} else if bits == 1<<(bitLen-1) {
+	case 1 << (bitLen - 1):
 		return "-0.0"
 	}
 
@@ -617,12 +638,12 @@ func ftoa[I uint32 | uint64](bits I, floatForSure bool) string {
 	}
 
 	// Discard a + after the exponent.
-	decimal = strings.Replace(decimal, "+", "", -1)
+	decimal = strings.ReplaceAll(decimal, "+", "")
 
 	// Insert a decimal point if necessary.
 	if !strings.Contains(decimal, ".") {
 		if strings.Contains(decimal, "e") {
-			decimal = strings.Replace(decimal, "e", ".0e", -1)
+			decimal = strings.ReplaceAll(decimal, "e", ".0e")
 		} else {
 			decimal += ".0"
 		}

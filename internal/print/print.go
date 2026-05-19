@@ -127,12 +127,12 @@ func (p *Printer) NewLine() {
 
 // Writes to the current line's buffer with Fprint.
 func (p *Printer) Write(args ...any) {
-	fmt.Fprint(p.Current(), args...)
+	_, _ = fmt.Fprint(p.Current(), args...)
 }
 
 // Writes to the current line's buffer with Fprintf.
 func (p *Printer) Writef(f string, args ...any) {
-	fmt.Fprintf(p.Current(), f, args...)
+	_, _ = fmt.Fprintf(p.Current(), f, args...)
 }
 
 // Adds a new remark made from stringifying args.
@@ -325,10 +325,10 @@ func (p *Printer) FoldIntoColumns(cols, count int) {
 				break
 			}
 
-			len := utf8.RuneCount(line.Bytes())
+			length := utf8.RuneCount(line.Bytes())
 			w := &widths[i%cols]
-			if len > *w {
-				*w = len
+			if length > *w {
+				*w = length
 			}
 		}
 		if end == 0 {

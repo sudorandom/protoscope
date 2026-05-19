@@ -128,10 +128,10 @@ func TestGoldens(t *testing.T) {
 		for _, tt := range tests {
 			got := Write(tt.pb, tt.opts)
 			f, _ := os.Create("testdata/" + tt.name)
-			defer f.Close()
+			defer func() { _ = f.Close() }()
 
-			fmt.Fprintln(f, tt.config)
-			fmt.Fprint(f, got)
+			_, _ = fmt.Fprintln(f, tt.config)
+			_, _ = fmt.Fprint(f, got)
 		}
 		return
 	}
