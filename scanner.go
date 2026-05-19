@@ -161,7 +161,7 @@ func (s *Scanner) Exec() ([]byte, error) {
 			return nil, err
 		}
 		if s.lastToken.Kind == tokenSeparator {
-			return nil, &ParseError{s.lastToken.Pos, errors.New("--- separator can only be used in delimited mode (-d)")}
+			return nil, &ParseError{s.lastToken.Pos, errors.New("--- separator can only be used in delimited mode (-varint-delimited)")}
 		}
 		return out, nil
 	}

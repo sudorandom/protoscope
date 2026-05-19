@@ -46,7 +46,7 @@ var (
 	explicitWireTypes      = flag.Bool("explicit-wire-types", false, "include an explicit wire type for every field")
 	noGroups               = flag.Bool("no-groups", false, "do not try to disassemble groups")
 	explicitLengthPrefixes = flag.Bool("explicit-length-prefixes", false, "emit literal length prefixes instead of braces")
-	delimited              = flag.Bool("d", false, "whether to treat the input as a varint-delimited stream of messages")
+	varintDelimited        = flag.Bool("varint-delimited", false, "whether to treat the input as a varint-delimited stream of messages")
 
 	descriptorSet = flag.String("descriptor-set", "", "path to a file containing an encoded FileDescriptorSet, for aiding disassembly")
 	messageType   = flag.String("message-type", "", "full name of a type in the FileDescriptorSet given by -descriptor-set;\n"+
@@ -157,7 +157,7 @@ func Main() error {
 		}
 		scanner := protoscope.NewScanner(inputText)
 		scanner.SetFile(inPath)
-		scanner.Delimited = *delimited
+		scanner.Delimited = *varintDelimited
 
 		outBytes, err = scanner.Exec()
 		if err != nil {
@@ -171,12 +171,13 @@ func Main() error {
 			ExplicitWireTypes:      *explicitWireTypes,
 			NoGroups:               *noGroups,
 			ExplicitLengthPrefixes: *explicitLengthPrefixes,
-			Delimited:              *delimited,
+			Delimited:              *varintDelimited,
 
 			Schema:          schema,
 			PrintFieldNames: *printFieldNames,
 			PrintEnumNames:  *printEnumNames,
 		}))
+
 	}
 
 	outFile := os.Stdout
