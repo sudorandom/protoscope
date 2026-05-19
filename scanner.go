@@ -1,4 +1,5 @@
 // Copyright 2022 Google LLC
+// Copyright 2026 Kevin McDonald
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -61,6 +62,7 @@ const (
 	tokenLeftCurly
 	tokenRightCurly
 	tokenGroupCurly
+	tokenSeparator
 	tokenEOF
 )
 
@@ -134,11 +136,16 @@ type Scanner struct {
 	// resume. The Offset field is used for indexing into Input; the remaining
 	// fields are used for error-reporting.
 	pos Position
+	// Delimited indicates that the input contains multiple varint-delimited
+	// messages separated by ---.
+	Delimited bool
+
+	lastToken token
 }
 
 // NewScanner creates a new scanner for parsing the given input.
 func NewScanner(input string) *Scanner {
-	return &Scanner{Input: input}
+	return &Scanner{Input: input, lastToken: token{FieldNumber: -1}}
 }
 
 // SetFile sets the file path shown in this Scanner's error reports.
@@ -149,7 +156,37 @@ func (s *Scanner) SetFile(path string) {
 // Exec consumes tokens until Input is exhausted, returning the resulting
 // encoded maybe-DER.
 func (s *Scanner) Exec() ([]byte, error) {
-	return s.exec(nil)
+	if !s.Delimited {
+		out, err := s.exec(nil)
+		if err != nil {
+			return nil, err
+		}
+		if s.lastToken.Kind == tokenSeparator {
+			return nil, &ParseError{s.lastToken.Pos, errors.New("--- separator can only be used in delimited mode (-d)")}
+		}
+		return out, nil
+	}
+
+	var out []byte
+	first := true
+	for {
+		msg, err := s.exec(nil)
+		if err != nil {
+			return nil, err
+		}
+		if first && s.lastToken.Kind == tokenEOF && len(msg) == 0 {
+			break
+		}
+		first = false
+
+		out = encodeVarint(out, uint64(len(msg)), 0)
+		out = append(out, msg...)
+
+		if s.lastToken.Kind == tokenEOF {
+			break
+		}
+	}
+	return out, nil
 }
 
 // isEOF returns whether the cursor is at least n bytes ahead of the end of the
@@ -290,6 +327,12 @@ func (s *Scanner) parseQuotedString() (token, error) {
 
 // next lexes the next token.
 func (s *Scanner) next(lengthModifier **token) (token, error) {
+	t, err := s.nextInternal(lengthModifier)
+	s.lastToken = t
+	return t, err
+}
+
+func (s *Scanner) nextInternal(lengthModifier **token) (token, error) {
 again:
 	if s.isEOF(0) {
 		return token{Kind: tokenEOF, Pos: s.pos}, nil
@@ -311,6 +354,12 @@ again:
 			}
 		}
 		goto again
+	case '-':
+		if strings.HasPrefix(s.Input[s.pos.Offset:], "---") {
+			start := s.pos
+			s.advance(3)
+			return token{Kind: tokenSeparator, Pos: start}, nil
+		}
 	case '!':
 		s.advance(1)
 		if s.Input[s.pos.Offset] != '{' {
@@ -628,6 +677,11 @@ func (s *Scanner) exec(leftCurly *token) ([]byte, error) {
 			} else {
 				return nil, &ParseError{token.Pos, errors.New("unmatched '}'")}
 			}
+		case tokenSeparator:
+			if leftCurly != nil || len(groupStack) != 0 {
+				return nil, &ParseError{token.Pos, errors.New("--- separator can only be used at the top level")}
+			}
+			return out, nil
 		case tokenEOF:
 			if leftCurly == nil && len(groupStack) == 0 {
 				return out, nil

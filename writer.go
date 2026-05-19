@@ -1,4 +1,5 @@
 // Copyright 2022 Google LLC
+// Copyright 2026 Kevin McDonald
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -44,6 +45,9 @@ type WriterOptions struct {
 	// Never prints {}; instead, prints out an explicit length prefix (but still
 	// indents the contents of delimited things.
 	ExplicitLengthPrefixes bool
+	// Delimited indicates that the input contains multiple varint-delimited
+	// messages.
+	Delimited bool
 
 	// Schema is a Descriptor that describes the message type we're expecting to
 	// disassemble, if any.
@@ -63,14 +67,40 @@ func Write(src []byte, opts WriterOptions) string {
 		w.descs.Push(opts.Schema)
 	}
 
-	for len(src) > 0 {
-		w.NewLine()
-		rest, ok := w.decodeField(src)
-		if !ok {
-			w.DiscardLine()
-			break
+	if opts.Delimited {
+		for len(src) > 0 {
+			rest, length, _, ok := decodeVarint(src)
+			if !ok || uint64(len(rest)) < length {
+				break
+			}
+			msg := rest[:length]
+			src = rest[length:]
+
+			for len(msg) > 0 {
+				w.NewLine()
+				r, ok := w.decodeField(msg)
+				if !ok {
+					w.DiscardLine()
+					break
+				}
+				msg = r
+			}
+
+			if len(src) > 0 {
+				w.NewLine()
+				w.Write("---")
+			}
 		}
-		src = rest
+	} else {
+		for len(src) > 0 {
+			w.NewLine()
+			rest, ok := w.decodeField(src)
+			if !ok {
+				w.DiscardLine()
+				break
+			}
+			src = rest
+		}
 	}
 
 	// Order does not matter for fixing up unclosed groups
