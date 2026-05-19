@@ -32,7 +32,6 @@ jobs:
       - name: check formatting
         run: golangci-lint fmt --diff ./...
 
-
   test:
     strategy:
       fail-fast: false

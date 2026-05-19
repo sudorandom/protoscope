@@ -403,6 +403,14 @@ loop:
 
 	symbol := s.Input[start.Offset:s.pos.Offset]
 
+	// Treat boolean literals as aliases for 1 and 0 so they can reuse
+	// the varint and length-modifier logic below.
+	if symbol == "true" {
+		symbol = "1"
+	} else if symbol == "false" {
+		symbol = "0"
+	}
+
 	if match := regexpIntOrTag.FindStringSubmatch(symbol); match != nil {
 		// Go can detect the base if we set base=0, but it treats a leading 0 as
 		// octal.
@@ -578,20 +586,15 @@ loop:
 	}
 
 	switch symbol {
-	case "true":
-		return token{Kind: tokenBytes, Value: []byte{1}, Pos: s.pos, FieldNumber: -1}, nil
-	case "false":
-		return token{Kind: tokenBytes, Value: []byte{0}, Pos: s.pos, FieldNumber: -1}, nil
 	case "inf32":
-		return token{Kind: tokenBytes, WireType: 5, Value: []byte{0x00, 0x00, 0x80, 0x7f}, Pos: s.pos, FieldNumber: -1}, nil
+	        return token{Kind: tokenBytes, WireType: 5, Value: []byte{0x00, 0x00, 0x80, 0x7f}, Pos: s.pos, FieldNumber: -1}, nil
 	case "-inf32":
-		return token{Kind: tokenBytes, WireType: 5, Value: []byte{0x00, 0x00, 0x80, 0xff}, Pos: s.pos, FieldNumber: -1}, nil
+	        return token{Kind: tokenBytes, WireType: 5, Value: []byte{0x00, 0x00, 0x80, 0xff}, Pos: s.pos, FieldNumber: -1}, nil
 	case "inf64":
-		return token{Kind: tokenBytes, WireType: 1, Value: []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x7f}, Pos: s.pos, FieldNumber: -1}, nil
+	        return token{Kind: tokenBytes, WireType: 1, Value: []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x7f}, Pos: s.pos, FieldNumber: -1}, nil
 	case "-inf64":
-		return token{Kind: tokenBytes, WireType: 1, Value: []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0xff}, Pos: s.pos, FieldNumber: -1}, nil
+	        return token{Kind: tokenBytes, WireType: 1, Value: []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0xff}, Pos: s.pos, FieldNumber: -1}, nil
 	}
-
 	return token{}, fmt.Errorf("unrecognized symbol %q", symbol)
 }
 
