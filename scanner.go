@@ -235,12 +235,11 @@ func (s *Scanner) parseEscapeSequence() (byte, error) {
 			return 0, &ParseError{s.pos, err}
 		}
 
-		var r byte
+		var r uint64
 		for _, b := range bytes {
-			r <<= 8
-			r |= b
+			r = (r << 8) | uint64(b)
 		}
-		return r, nil
+		return byte(r), nil
 	case '0', '1', '2', '3', '4', '5', '6', '7':
 		start := s.pos.Offset
 		for i := 0; i < 3 && !s.isEOF(0); i++ {
@@ -315,7 +314,7 @@ again:
 	case '!':
 		s.advance(1)
 		if s.Input[s.pos.Offset] != '{' {
-			return token{}, &ParseError{s.pos, errors.New("expected { after !")}
+			return token{}, &ParseError{s.pos, errors.New("expected { after ! symbol")}
 		}
 		s.advance(1)
 		return token{Kind: tokenGroupCurly, Pos: s.pos}, nil
@@ -421,7 +420,7 @@ loop:
 			}
 
 			if value>>61 != 0 && value>>61 != -1 {
-				return token{}, &ParseError{start, errors.New("field number too large for three extra bits for the wire type.")}
+				return token{}, &ParseError{start, errors.New("field number too large for three extra bits for the wire type")}
 			}
 			fieldNumber = value
 
@@ -436,12 +435,12 @@ loop:
 			value = (value << 1) ^ (value >> 63)
 			fallthrough
 		case "":
-			var len int
+			var longForm int
 			if *lengthModifier != nil {
-				len = (*lengthModifier).Length
+				longForm = (*lengthModifier).Length
 				*lengthModifier = nil
 			}
-			enc = encodeVarint(nil, uint64(value), len)
+			enc = encodeVarint(nil, uint64(value), longForm)
 		case "i32":
 			wireType = 5
 			if value > math.MaxUint32 || value < math.MinInt32 {
@@ -565,7 +564,7 @@ func (s *Scanner) exec(leftCurly *token) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		if lengthModifier != nil && token.Kind != tokenLeftCurly && !(token.Kind == tokenRightCurly && len(groupStack) != 0) {
+		if lengthModifier != nil && token.Kind != tokenLeftCurly && (token.Kind != tokenRightCurly || len(groupStack) == 0) {
 			return nil, &ParseError{lengthModifier.Pos, errors.New("length modifier was not followed by '{', '}', or varint")}
 		}
 		prevToken := lastToken
@@ -630,10 +629,6 @@ func (s *Scanner) exec(leftCurly *token) ([]byte, error) {
 				return nil, &ParseError{token.Pos, errors.New("unmatched '}'")}
 			}
 		case tokenEOF:
-			if inferredTypeIndex != -1 {
-				inferredTypeIndex = -1
-			}
-
 			if leftCurly == nil && len(groupStack) == 0 {
 				return out, nil
 			}

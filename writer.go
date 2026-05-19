@@ -74,21 +74,12 @@ func Write(src []byte, opts WriterOptions) string {
 	}
 
 	// Order does not matter for fixing up unclosed groups
-	for _ = range w.groups {
+	for range w.groups {
 		w.resetGroup()
 	}
 
 	w.dumpHexString(src)
 	return string(w.Finish())
-}
-
-type line struct {
-	text     *strings.Builder
-	comments []string
-
-	// indent is how much the *next* line should be indented compared to this
-	// one.
-	indent int
 }
 
 type group struct {
@@ -504,9 +495,8 @@ func (w *writer) decodeField(src []byte) ([]byte, bool) {
 			if len(src2) == 0 || (w.AllFieldsAreMessages && len(src2) < len(delimited)) {
 				delimited = src2
 				return decodeBytes()
-			} else {
-				w.Reset(startLine)
 			}
+			w.Reset(startLine)
 		}
 
 		// Otherwise, maybe it's a UTF-8 string.
@@ -580,9 +570,10 @@ func ftoa[I uint32 | uint64](bits I, floatForSure bool) string {
 	}
 	mantLen = bitLen - expLen - 1
 
-	if bits == 0 {
+	switch bits {
+	case 0:
 		return "0.0"
-	} else if bits == 1<<(bitLen-1) {
+	case 1 << (bitLen - 1):
 		return "-0.0"
 	}
 
@@ -617,12 +608,12 @@ func ftoa[I uint32 | uint64](bits I, floatForSure bool) string {
 	}
 
 	// Discard a + after the exponent.
-	decimal = strings.Replace(decimal, "+", "", -1)
+	decimal = strings.ReplaceAll(decimal, "+", "")
 
 	// Insert a decimal point if necessary.
 	if !strings.Contains(decimal, ".") {
 		if strings.Contains(decimal, "e") {
-			decimal = strings.Replace(decimal, "e", ".0e", -1)
+			decimal = strings.ReplaceAll(decimal, "e", ".0e")
 		} else {
 			decimal += ".0"
 		}

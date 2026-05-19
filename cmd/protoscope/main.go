@@ -27,11 +27,10 @@ import (
 
 	descpb "google.golang.org/protobuf/types/descriptorpb"
 
+	"github.com/protocolbuffers/protoscope"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
-
-	"github.com/protocolbuffers/protoscope"
 )
 
 var (
@@ -79,7 +78,6 @@ func Main() error {
 		pager := os.Getenv("PAGER")
 		if pager == "" {
 			return fmt.Errorf("%s", protoscope.LanguageTxt)
-			return nil
 		}
 
 		cmd := exec.Command(pager)
@@ -139,7 +137,7 @@ func Main() error {
 		if err != nil {
 			return err
 		}
-		defer inFile.Close()
+		defer func() { _ = inFile.Close() }()
 	}
 
 	inBytes, err := io.ReadAll(inFile)
@@ -154,8 +152,7 @@ func Main() error {
 
 		outBytes, err = scanner.Exec()
 		if err != nil {
-			return fmt.Errorf("syntax error: %s\n", err)
-			os.Exit(1)
+			return fmt.Errorf("syntax error: %s", err)
 		}
 	} else {
 		outBytes = []byte(protoscope.Write(inBytes, protoscope.WriterOptions{
@@ -178,7 +175,7 @@ func Main() error {
 		if err != nil {
 			return err
 		}
-		defer outFile.Close()
+		defer func() { _ = outFile.Close() }()
 	}
 
 	_, err = outFile.Write(outBytes)

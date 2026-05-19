@@ -486,7 +486,7 @@ func TestScan(t *testing.T) {
 				6:I32     # A fixed-width, 32-bit blob.
 			`,
 			want: []byte{
-				1<<3 | 0,
+				1 << 3,
 				2<<3 | 1,
 				3<<3 | 2,
 				4<<3 | 3,
