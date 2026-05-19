@@ -81,18 +81,18 @@ func TestDelimited(t *testing.T) {
 
 func TestSeparatorError(t *testing.T) {
 	tests := []struct {
-		name string
-		text string
+		name      string
+		text      string
 		delimited bool
 	}{
 		{
-			name: "separator_without_flag",
-			text: "1: 1\n---\n2: 2",
+			name:      "separator_without_flag",
+			text:      "1: 1\n---\n2: 2",
 			delimited: false,
 		},
 		{
-			name: "separator_in_block",
-			text: "1: { --- }",
+			name:      "separator_in_block",
+			text:      "1: { --- }",
 			delimited: true,
 		},
 	}
